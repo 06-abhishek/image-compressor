@@ -1,4 +1,5 @@
 // File Path: img-compressor\app\page.js -
+
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import Footer from "@/components/footer";
@@ -17,9 +18,11 @@ export default function Page() {
   const [isSelectedFileEmpty, setIsSelectedFileEmpty] = useState(true);
   const [showOriginal, setShowOriginal] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
+  const [downloadedImages, setDownloadedImages] = useState([]);
   const [isDragging, setIsDragging] = useState(false);
   const [compressionProgress, setCompressionProgress] = useState(0);
-  const [imageQuality, setImageQuality] = useState(70);
+  const [customCompressionData, setCustomCompressionData] = useState();
+  const [userActivity, setUserActivity] = useState([]);
 
   // Is Selected files are empty:
   useEffect(() => {
@@ -30,12 +33,11 @@ export default function Page() {
     }
   }, [selectedFiles]);
 
-  // Reference to perform input by clicking on a button:
   const handleUploadOnClick = () => {
     fileInputRef.current.click();
   };
 
-  // file change function (to make input work):
+  // Compress and prepare files on the client side:
   const handleFileChange = async (event) => {
     let files = Array.from(event.target.files); // Converts FileList to an array
 
@@ -123,6 +125,12 @@ export default function Page() {
     a.download = file.name || "downloaded-image"; // Set filename
     a.click();
 
+    // Set when user download any image:
+    setDownloadedImages((prevDownloadedImages) => [
+      ...prevDownloadedImages,
+      fileURL,
+    ]);
+
     // Clean up the object URL to free memory
     URL.revokeObjectURL(fileURL);
   };
@@ -130,14 +138,23 @@ export default function Page() {
   // Download all images in zip file:
   const handleDownloadAllImages = () => {
     const zip = new JSZip(); // Initialize JSZip instance
+    const downloadAllFiles = [];
 
     // Add all images to the ZIP
     selectedFiles.forEach((d, index) => {
+      downloadAllFiles.push(d.compressedFileURL); // Flatten the array if necessary
+
       zip.file(
         d.compressedFile.name || `image-${index + 1}.jpg`,
         d.compressedFile
       ); // Add each file
     });
+
+    // Update state with all the new files at once
+    setDownloadedImages((prevDownloadedImages) => [
+      ...prevDownloadedImages,
+      ...downloadAllFiles,
+    ]);
 
     // Generate the ZIP and trigger the download
     zip.generateAsync({ type: "blob" }).then((content) => {
@@ -225,14 +242,35 @@ export default function Page() {
     setSelectedImage(img);
   };
 
+  // Inserting selectedFiles & downloadedImages in one array in userActivity:
   useEffect(() => {
-    console.log({
-      selectedFiles,
-      selectedImage,
-      compressionProgress,
-      imageQuality,
+    setUserActivity({
+      selectedFiles: selectedFiles,
+      downloadedImages: downloadedImages,
     });
-  }, [selectedImage, selectedFiles, compressionProgress, imageQuality]);
+  }, [selectedFiles, downloadedImages]);
+
+  useEffect(() => {
+    if (
+      userActivity &&
+      (userActivity.selectedFiles?.length > 0 ||
+        userActivity.downloadedImages?.length > 0)
+    ) {
+      (async function fetchData() {
+        try {
+          let a = await fetch("/api/userData", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(userActivity),
+          });
+          let res = await a.json();
+          // console.log(res);
+        } catch (err) {
+          console.log("Error while fetching data to backend: ", err);
+        }
+      })();
+    }
+  }, [userActivity]);
 
   return (
     <>
@@ -258,7 +296,7 @@ export default function Page() {
             onChange={handleFileChange}
           />
 
-          {/* Select images */}
+          {/* Compressing (Loading...) button */}
           {compressionProgress > 0 && (
             <button
               disabled
@@ -287,6 +325,7 @@ export default function Page() {
             </button>
           )}
 
+          {/* Upload Images button */}
           {compressionProgress === 0 && (
             <button
               aria-label="UPLOAD IMAGES"
@@ -313,6 +352,7 @@ export default function Page() {
           </button>
         </div>
 
+        {/* Drag and Drop */}
         {selectedFiles.length <= 0 && (
           <div
             className={`h-[174px] w-full flex justify-center items-center border-2 border-dashed ${
@@ -325,7 +365,7 @@ export default function Page() {
           </div>
         )}
 
-        {/* Display selected images */}
+        {/* Display all selected images */}
         {selectedFiles.length > 0 && (
           <div className="grid grid-cols-3 gap-4 mt-8">
             {selectedFiles.map((d) => (
@@ -401,11 +441,14 @@ export default function Page() {
         </div>
       </div>
 
-      {selectedImage && (
-        <div className="m-8 shadow-[0px_0px_6px_rgba(0,0,0,0.1)] bg-red-30 p-6 rounded-md">
+      {/* Show user's selected image. First user not selected any image that time shows first image: */}
+      {selectedFiles.length > 0 && (
+        <div className="m-8 shadow-[0px_0px_6px_rgba(0,0,0,0.1)] bg-red-30 p-6 rounded-md h-auto">
           <div className="flex flex-col gap-6">
             <h2 className="font-bold text-lg text-center">
-              {selectedImage.originalFile.name}
+              {selectedImage
+                ? selectedImage.originalFile.name
+                : selectedFiles[0].originalFile.name}
             </h2>
 
             <hr />
@@ -414,44 +457,99 @@ export default function Page() {
               <div>
                 Original :{" "}
                 <span className="font-bold">
-                  {Math.floor(selectedImage.originalFile.size / 1024)}KB
+                  {Math.floor(
+                    (selectedImage
+                      ? selectedImage.originalFile.size
+                      : selectedFiles[0].originalFile.size) / 1024
+                  )}
+                  KB
                 </span>
               </div>
               <div>
                 Compressed :{" "}
                 <span className="font-bold">
-                  {Math.floor(selectedImage.compressedFile.size / 1024)}KB{" "}
-                  {`(${selectedImage.compressionInPercentage}%)`}
+                  {Math.floor(
+                    (selectedImage
+                      ? selectedImage.compressedFile.size
+                      : selectedFiles[0].compressedFile.size) / 1024
+                  )}
+                  KB (
+                  {selectedImage
+                    ? selectedImage.compressionInPercentage
+                    : selectedFiles[0].compressionInPercentage}
+                  %)
                 </span>
               </div>
             </div>
 
             <div className="flex justify-center">
               <ImageCompressionComponent
-                originalSrc={selectedImage.fileURL}
-                compressedSrc={selectedImage.compressedFileURL}
+                originalSrc={
+                  selectedImage
+                    ? selectedImage.fileURL
+                    : selectedFiles[0].fileURL
+                }
+                compressedSrc={
+                  selectedImage
+                    ? selectedImage.compressedFileURL
+                    : selectedFiles[0].compressedFileURL
+                }
               />
             </div>
 
-            <div>
-              <CompressionSetting onQualityChange={setImageQuality} />
-            </div>
-
-            {/* Download selected image */}
+            {/* Download selected image button */}
             <div className="flex justify-center">
               <a
-                href={selectedImage.fileURL}
+                onClick={() => {
+                  // Ensure selectedImage or selectedFiles[0] exists
+                  const itemToAdd = selectedImage
+                    ? selectedImage.compressedFileURL
+                    : selectedFiles[0].compressedFileURL;
+
+                  if (itemToAdd) {
+                    // Update the state by adding the entire object
+                    setDownloadedImages((prevDownloadedImages) => [
+                      ...prevDownloadedImages,
+                      itemToAdd, // Add the entire object
+                    ]);
+                  }
+                }}
+                href={
+                  selectedImage
+                    ? selectedImage.compressedFileURL
+                    : selectedFiles[0].compressedFileURL
+                }
                 download={
-                  selectedImage.compressedFile.name || "downloaded-image"
+                  (selectedImage
+                    ? selectedImage.compressedFile.name
+                    : selectedFiles[0].compressedFile.name) ||
+                  "downloaded-image"
                 }
                 className="bg-blue-500 text-xl font-semibold px-5 py-2 rounded-lg text-white hover:bg-blue-600 transition-all duration-300 ease-in-out"
               >
-                Download
+                Download Default
               </a>
             </div>
+
+            <hr />
+
+            {(selectedImage || selectedFiles) && (
+              <div className="max-w-full w-full">
+                <CompressionSetting
+                  selectedImageToCustomize={
+                    selectedImage
+                      ? selectedImage.originalFile
+                      : selectedFiles[0].originalFile
+                  }
+                  onCustomDataChange={setCustomCompressionData}
+                  onDownloadImage={setDownloadedImages}
+                />
+              </div>
+            )}
           </div>
         </div>
       )}
+
       <Footer />
     </>
   );
